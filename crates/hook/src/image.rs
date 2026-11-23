@@ -2,6 +2,7 @@ use std::{
    borrow::Cow,
    ffi::{
       CStr,
+      c_char,
       c_int,
       c_void,
    },
@@ -15,6 +16,14 @@ use std::{
 };
 
 use memchr::memmem;
+
+#[cfg(target_vendor = "apple")]
+unsafe extern "C" {
+   fn _dyld_image_count() -> u32;
+   fn _dyld_get_image_header(index: u32) -> *const c_void;
+   fn _dyld_get_image_name(index: u32) -> *const c_char;
+   fn _dyld_get_image_slide(header: *const c_void) -> isize;
+}
 
 const NT_GNU_BUILD_ID: u32 = 3;
 const PF_X: u32 = 1;
@@ -223,6 +232,85 @@ impl Image<'static> {
    }
 }
 
+#[cfg(target_vendor = "apple")]
+impl Image<'static> {
+   /// Every image `_dyld_get_image_*` reports on Apple platforms.
+   ///
+   /// # Safety
+   ///
+   /// The segments borrow mapped memory; dyld keeps images loaded while they
+   /// are alive and does not rewrite their segments outside fixup time.
+   pub unsafe fn loaded() -> Vec<Self> {
+      // SAFETY: with_image_count is a plain query.
+      let count = unsafe { libc::_dyld_image_count() };
+      (0..count)
+         .filter_map(|index| {
+            // SAFETY: index is below the count dyld reported.
+            let header = unsafe { libc::_dyld_get_image_header(index) };
+            if header.is_null() {
+               return None;
+            }
+            let slide = unsafe { libc::_dyld_get_image_slide(header) };
+            let name = unsafe { libc::_dyld_get_image_name(index) };
+            let path = if name.is_null() {
+               String::new()
+            } else {
+               // SAFETY: dyld returns a NUL-terminated path.
+               unsafe { CStr::from_ptr(name) }.to_string_lossy().into_owned()
+            };
+            let mut image = Image {
+               path,
+               build_id: None,
+               segments: Vec::new(),
+               eh_frame_hdr: None,
+            };
+            // SAFETY: dyld returns a valid mach_header_64 for our processes.
+            let base = header as usize;
+            let magic = unsafe { std::ptr::read_unaligned(base as *const u32) };
+            if magic != 0xfeed_facf_u32 {
+               return None;
+            }
+            // The load commands start 32 bytes into a 64-bit header.
+            const MH_MAGIC_64: u32 = 0xfeed_facf;
+            const LC_SEGMENT_64: u32 = 0x19;
+            const LC_UUID: u32 = 0x1b;
+            let _ = MH_MAGIC_64;
+            let ncmds = unsafe { std::ptr::read_unaligned((base + 16) as *const u32) } as usize;
+            let mut off = base + 32;
+            for _ in 0..ncmds {
+               let cmd = unsafe { std::ptr::read_unaligned(off as *const u32) };
+               let size = unsafe { std::ptr::read_unaligned((off + 4) as *const u32) } as usize;
+               if cmd == LC_SEGMENT_64 {
+                  // segment_command_64: cmd(0), cmdsize(4), segname(8..24),
+                  // vmaddr(24), vmsize(32), fileoff(40), filesize(48),
+                  // maxprot(56), initprot(60), nsects(64), flags(68)
+                  let vm = unsafe { std::ptr::read_unaligned((off + 24) as *const u64) } as usize;
+                  let len = unsafe { std::ptr::read_unaligned((off + 32) as *const u64) } as usize;
+                  let initprot = unsafe { std::ptr::read_unaligned((off + 60) as *const i32) };
+                  if len != 0 && initprot & libc::PROT_READ != 0 {
+                     let addr = vm.wrapping_add_signed(slide);
+                     // SAFETY: dyld maps the segment for the image lifetime.
+                     let bytes = unsafe { slice::from_raw_parts(addr as *const u8, len) };
+                     image.segments.push(Segment {
+                        addr,
+                        bytes: Cow::Borrowed(bytes),
+                        executable: initprot & libc::PROT_EXEC != 0,
+                        writable: initprot & libc::PROT_WRITE != 0,
+                     });
+                  }
+               } else if cmd == LC_UUID && image.build_id.is_none() {
+                  // SAFETY: LC_UUID always has a 16-byte UUID at offset 8.
+                  let uuid = unsafe { slice::from_raw_parts((off + 8) as *const u8, 16) };
+                  image.build_id = BuildId::from_bytes(uuid);
+               }
+               off += size;
+            }
+            Some(image)
+         })
+         .collect()
+   }
+}
+
 #[cfg(unix)]
 impl Image<'static> {
    /// Writes each `(slot, value)` pair into this module's mapped memory and
@@ -258,8 +346,15 @@ pub unsafe fn swap_words(writes: &[(usize, usize)]) -> Result<Vec<usize>, crate:
    pages.sort_unstable();
    pages.dedup();
 
+   #[cfg(target_vendor = "apple")]
+   let restore = pages
+      .iter()
+      .map(|&page| (page, libc::PROT_READ))
+      .collect::<Vec<(usize, c_int)>>();
+   #[cfg(not(target_vendor = "apple"))]
    let maps = std::fs::read_to_string("/proc/self/maps")
       .map_err(|source| crate::Error::Protect { addr: 0, source })?;
+   #[cfg(not(target_vendor = "apple"))]
    let restore = pages
       .iter()
       .map(|&page| Some((page, protection(&maps, page)?)))
@@ -318,6 +413,7 @@ impl Image<'_> {
    }
 
    /// Addresses in executable segments where `pattern` matches.
+   #[cfg(not(target_vendor = "apple"))]
    #[must_use]
    pub fn scan(&self, pattern: crate::Pattern) -> Vec<usize> {
       self
@@ -338,6 +434,24 @@ impl Image<'_> {
    #[must_use]
    pub fn find_bytes(&self, needle: &[u8]) -> Vec<usize> {
       self.find_in(needle, |_| true)
+   }
+
+   /// Addresses where `pattern` matches, anywhere in the image. On Apple
+   /// platforms the code and its constants live in __TEXT, so no filtering is
+   /// needed; a caller that needs code only can pair this with `is_code`.
+   #[cfg(target_vendor = "apple")]
+   #[must_use]
+   pub fn scan(&self, pattern: crate::Pattern) -> Vec<usize> {
+      self
+         .segments
+         .iter()
+         .flat_map(|segment| {
+            pattern
+               .find_in(&segment.bytes)
+               .into_iter()
+               .map(|offset| segment.addr + offset)
+         })
+         .collect()
    }
 
    /// [`Image::find_bytes`], lazily in address order, so a caller can stop at

@@ -195,6 +195,66 @@ impl<'a> ElfFile<'a> {
    }
 }
 
+/// A Mach-O file viewed at its link addresses, for offline tools.
+pub struct MachOFile<'a> {
+   pub image: Image<'a>,
+}
+
+impl<'a> MachOFile<'a> {
+   pub fn parse(path: &str, data: &'a [u8]) -> Result<Self, FileError> {
+      use object::{
+         Endianness,
+         macho::{
+            self,
+            MachHeader64,
+         },
+         read::macho::{
+            LoadCommand,
+            MachHeader,
+            Segment,
+         },
+      };
+
+      let parse = |source| FileError::Parse { path: path.to_owned(), source };
+      let truncated = || FileError::Truncated { path: path.to_owned() };
+      let address = |source| FileError::Address { path: path.to_owned(), source };
+
+      let header = MachHeader64::<Endianness>::parse(data, 0, data.len()).map_err(parse)?;
+      let endian = header.endian().map_err(parse)?;
+      let mut image = Image {
+         path: path.to_owned(),
+         build_id: None,
+         segments: Vec::new(),
+         eh_frame_hdr: None,
+      };
+      for command in header.load_commands(endian, data, 0).map_err(parse)? {
+         let command = command.map_err(parse)?;
+         match command {
+            LoadCommand::Segment64(segment) if segment.file_size() > 0 => {
+               let bytes = segment.data(endian, data).map_err(|()| truncated())?;
+               let mut owned = bytes.to_vec();
+               owned.resize(
+                  usize::try_from(segment.vm_size(endian)).map_err(address)?,
+                  0,
+               );
+               let initprot = segment.initprot(endian);
+               image.segments.push(Segment {
+                  addr: usize::try_from(segment.vmaddr(endian)).map_err(address)?,
+                  bytes: Cow::Owned(owned),
+                  executable: initprot & macho::VM_PROT_EXECUTE != 0,
+                  writable: initprot & macho::VM_PROT_WRITE != 0,
+               });
+            },
+            LoadCommand::Uuid(uuid) if image.build_id.is_none() => {
+               image.build_id = BuildId::from_bytes(uuid.uuid());
+            },
+            _ => {},
+         }
+      }
+      Ok(Self { image })
+   }
+}
+
 fn plain_rela(bytes: &[u8], relative: u32) -> Vec<(usize, u64)> {
    bytes
       .as_chunks::<24>()
