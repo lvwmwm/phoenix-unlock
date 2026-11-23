@@ -1,4 +1,4 @@
-import { IOS_SOURCE_SIZE, IOS_SOURCE_URL, PROXY as DEFAULT_PROXY, VERIFIED } from './config.js';
+import { IOS_CHUNKS, IOS_CHUNK_SIZE, IOS_SOURCE_SIZE, PROXY as DEFAULT_PROXY, VERIFIED } from './config.js';
 import { ABIS, abiOf, buildPatchedApk } from './lib/apk.js';
 import { BOOTSTRAP_URL, bundleScripts, GADGET_URLS, gunzip } from './lib/frida.js';
 import { keysFrom } from './lib/sign.js';
@@ -256,26 +256,53 @@ function offerIpa(label, href, size, download) {
   a.scrollIntoView({ behavior: 'smooth' });
 }
 
+async function fetchChunks(s) {
+  const parts = [];
+  for (let i = 0; i < IOS_CHUNKS.length; i++) {
+    const res = await fetch(IOS_CHUNKS[i]);
+    if (!res.ok) throw new Error(`${IOS_CHUNKS[i]}: HTTP ${res.status}`);
+    const reader = res.body.getReader();
+    let buf = new Uint8Array(IOS_CHUNK_SIZE), n = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (n + value.length > buf.length) {
+        const b = new Uint8Array(Math.max(buf.length * 2, n + value.length));
+        b.set(buf.subarray(0, n)); buf = b;
+      }
+      buf.set(value, n); n += value.length;
+      s.progress((i * IOS_CHUNK_SIZE + n) / IOS_SOURCE_SIZE, `part ${i + 1}/${IOS_CHUNKS.length}`);
+    }
+    parts.push(buf.length === n ? buf : buf.slice(0, n));
+  }
+  const out = new Uint8Array(IOS_SOURCE_SIZE);
+  let at = 0;
+  for (const p of parts) { out.set(p, at); at += p.length; }
+  s.done(mb(out.length));
+  return out;
+}
+
 $('ios-go').onclick = async () => {
   const file = $('ios-file').files[0];
   $('ios-err').hidden = true;
   $('ios-result').hidden = true;
   $('ios-steps').textContent = '';
   $('ios-log').textContent = '';
-  if (!file) {
-    iosStep('Download source IPA').done('Discord 357.0');
-    $('ios-progress').hidden = false;
-    offerIpa('Download decrypted IPA', IOS_SOURCE_URL,
-      `Unmodified Discord 357.0 (${IOS_SOURCE_SIZE}). Download it, then pick it above — the patch runs here in your browser.`);
-    return;
-  }
   $('ios-go').disabled = true;
   $('ios-progress').hidden = false;
   try {
-    const read = iosStep('Read IPA');
-    read.progress(0.1, 'reading…');
-    const u8 = new Uint8Array(await file.arrayBuffer());
-    read.done(mb(u8.length));
+    let u8, name;
+    if (file) {
+      const read = iosStep('Read IPA');
+      read.progress(0.1, 'reading…');
+      u8 = new Uint8Array(await file.arrayBuffer());
+      read.done(mb(u8.length));
+      name = file.name.replace(/\.ipa$/i, '');
+    } else {
+      iosLog('No file picked — using Discord 357.0 from this site.');
+      u8 = await fetchChunks(iosStep('Download Discord 357.0 IPA'));
+      name = 'discord-357.0';
+    }
 
     const patch = iosStep('Patch PhoenixFatClient');
     patch.progress(0.5, 'working…');
@@ -284,7 +311,7 @@ $('ios-go').onclick = async () => {
 
     const blob = new Blob(parts, { type: 'application/octet-stream' });
     offerIpa('Download patched IPA', URL.createObjectURL(blob),
-      `Patched IPA: ${mb(blob.size)}.`, file.name.replace(/\.ipa$/i, '') + '-unlocked.ipa');
+      `Patched IPA: ${mb(blob.size)}.`, name + '-unlocked.ipa');
   } catch (e) {
     console.error(e);
     $('ios-err').textContent = `Something went wrong: ${e.message || e}`;
