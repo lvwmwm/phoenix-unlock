@@ -130,7 +130,7 @@ phoenix.on(phoenix.gateway.messageCreate, (m) => phoenix.log.info(m.author?.user
       <p class="note"><b>iOS build (Discord 357.0 / 1.12.2).</b> Pick a <b>decrypted</b> IPA of the hybrid Discord build that contains <code>PhoenixFatClient.framework</code>. App Store copies are FairPlay-encrypted and cannot be patched; decrypt yours first (e.g. with TrollDecrypt on a jailbroken device). The file never leaves your browser.</p>
       <p class="note">The patch also enables <b>Discord experiments</b> (staff mode) by forcing <code>isStaffEnv</code> in the JS bundle, so the Phoenix launch switch is available without any extra tweak.</p>
       <input type="file" id="ios-file" accept=".ipa,application/octet-stream">
-      <p class="note">Leave it empty to use the built-in <b>Discord 357.0</b> decrypted hybrid IPA.</p>
+      <p class="note">No decrypted IPA? Leave this empty and download the <b>unmodified Discord 357.0</b> IPA, then pick it here. Nothing is pre-patched — the patch runs in your browser.</p>
     </section>
 
     <button id="ios-go">Patch IPA</button>

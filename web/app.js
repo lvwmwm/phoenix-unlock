@@ -1,4 +1,4 @@
-import { IOS_DEFAULT_IPA, IOS_DEFAULT_NAME, PROXY as DEFAULT_PROXY, VERIFIED } from './config.js';
+import { IOS_SOURCE_SIZE, IOS_SOURCE_URL, PROXY as DEFAULT_PROXY, VERIFIED } from './config.js';
 import { ABIS, abiOf, buildPatchedApk } from './lib/apk.js';
 import { BOOTSTRAP_URL, bundleScripts, GADGET_URLS, gunzip } from './lib/frida.js';
 import { keysFrom } from './lib/sign.js';
@@ -245,57 +245,46 @@ function iosStep(label) {
 }
 const iosLog = (s) => { $('ios-log').textContent += s + '\n'; $('ios-log').scrollTop = 1e9; };
 
-/** Read the picked file, or stream the bundled decrypted IPA as a fallback. */
-async function iosInput(s) {
-  const file = $('ios-file').files[0];
-  if (file) {
-    s.progress(0.1, 'reading…');
-    const u8 = new Uint8Array(await file.arrayBuffer());
-    s.done(mb(u8.length));
-    return { u8, name: file.name.replace(/\.ipa$/i, '') };
-  }
-  if (!IOS_DEFAULT_IPA) throw new Error('Pick a decrypted .ipa first.');
-  iosLog(`No file picked — using ${IOS_DEFAULT_NAME}.`);
-  const res = await fetch(IOS_DEFAULT_IPA);
-  if (!res.ok) throw new Error(`${IOS_DEFAULT_IPA}: HTTP ${res.status}`);
-  const total = +res.headers.get('Content-Length') || 0;
-  const reader = res.body.getReader();
-  let buf = new Uint8Array(total || 1 << 24), n = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    if (n + value.length > buf.length) {
-      const b = new Uint8Array(Math.max(buf.length * 2, n + value.length));
-      b.set(buf.subarray(0, n)); buf = b;
-    }
-    buf.set(value, n); n += value.length;
-    s.progress(total ? n / total : 0, total ? `${mb(n)} / ${mb(total)}` : mb(n));
-  }
-  s.done(mb(n));
-  return { u8: buf.length === n ? buf : buf.slice(0, n), name: 'discord-357.0-unlocked' };
+function offerIpa(label, href, size, download) {
+  const a = $('ios-dl');
+  a.textContent = label;
+  a.href = href;
+  if (download) a.download = download;
+  else a.removeAttribute('download');
+  $('ios-size').textContent = size;
+  $('ios-result').hidden = false;
+  a.scrollIntoView({ behavior: 'smooth' });
 }
 
 $('ios-go').onclick = async () => {
-  $('ios-go').disabled = true;
+  const file = $('ios-file').files[0];
   $('ios-err').hidden = true;
   $('ios-result').hidden = true;
   $('ios-steps').textContent = '';
   $('ios-log').textContent = '';
+  if (!file) {
+    iosStep('Download source IPA').done('Discord 357.0');
+    $('ios-progress').hidden = false;
+    offerIpa('Download decrypted IPA', IOS_SOURCE_URL,
+      `Unmodified Discord 357.0 (${IOS_SOURCE_SIZE}). Download it, then pick it above — the patch runs here in your browser.`);
+    return;
+  }
+  $('ios-go').disabled = true;
   $('ios-progress').hidden = false;
   try {
-    const { u8, name } = await iosInput(iosStep('Read IPA'));
+    const read = iosStep('Read IPA');
+    read.progress(0.1, 'reading…');
+    const u8 = new Uint8Array(await file.arrayBuffer());
+    read.done(mb(u8.length));
+
     const patch = iosStep('Patch PhoenixFatClient');
     patch.progress(0.5, 'working…');
     const parts = await buildPatchedIpa(u8, iosLog);
     patch.done('2 evaluators + staff experiments patched');
 
     const blob = new Blob(parts, { type: 'application/octet-stream' });
-    const a = $('ios-dl');
-    a.href = URL.createObjectURL(blob);
-    a.download = name + '-unlocked.ipa';
-    $('ios-size').textContent = `Patched IPA: ${mb(blob.size)}.`;
-    $('ios-result').hidden = false;
-    a.scrollIntoView({ behavior: 'smooth' });
+    offerIpa('Download patched IPA', URL.createObjectURL(blob),
+      `Patched IPA: ${mb(blob.size)}.`, file.name.replace(/\.ipa$/i, '') + '-unlocked.ipa');
   } catch (e) {
     console.error(e);
     $('ios-err').textContent = `Something went wrong: ${e.message || e}`;
