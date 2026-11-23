@@ -170,7 +170,7 @@ pub(crate) fn discover(
 // ---------------------------------------------------------------------------
 
 #[cfg(target_vendor = "apple")]
-extern "C" {
+unsafe extern "C" {
    fn mach_task_self() -> u32;
    fn vm_read_overwrite(
       task: u32,
