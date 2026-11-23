@@ -156,7 +156,7 @@ pub struct Image<'a> {
    pub eh_frame_hdr: Option<usize>,
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, not(target_vendor = "apple")))]
 impl Image<'static> {
    /// Every module `dl_iterate_phdr` reports.
    ///
@@ -242,16 +242,16 @@ impl Image<'static> {
    /// are alive and does not rewrite their segments outside fixup time.
    pub unsafe fn loaded() -> Vec<Self> {
       // SAFETY: with_image_count is a plain query.
-      let count = unsafe { libc::_dyld_image_count() };
+      let count = unsafe { _dyld_image_count() };
       (0..count)
          .filter_map(|index| {
             // SAFETY: index is below the count dyld reported.
-            let header = unsafe { libc::_dyld_get_image_header(index) };
+            let header = unsafe { _dyld_get_image_header(index) };
             if header.is_null() {
                return None;
             }
-            let slide = unsafe { libc::_dyld_get_image_slide(header) };
-            let name = unsafe { libc::_dyld_get_image_name(index) };
+            let slide = unsafe { _dyld_get_image_slide(header) };
+            let name = unsafe { _dyld_get_image_name(index) };
             let path = if name.is_null() {
                String::new()
             } else {
@@ -311,7 +311,22 @@ impl Image<'static> {
    }
 }
 
-#[cfg(unix)]
+#[cfg(target_vendor = "apple")]
+impl Image<'static> {
+   /// Writes each `(slot, value)` pair into this module's mapped memory and
+   /// returns the values the slots held. `__DATA_CONST` is made writable for
+   /// the write and restored afterwards.
+   ///
+   /// # Safety
+   ///
+   /// Every slot is a pointer-aligned word in this module, and no thread reads
+   /// a slot while it is written.
+   pub unsafe fn swap_words(&self, writes: &[(usize, usize)]) -> Result<Vec<usize>, crate::Error> {
+      unsafe { swap_words(writes) }
+   }
+}
+
+#[cfg(all(unix, not(target_vendor = "apple")))]
 impl Image<'static> {
    /// Writes each `(slot, value)` pair into this module's mapped memory and
    /// returns the values the slots held. Pages under `PT_GNU_RELRO` are made
@@ -327,7 +342,44 @@ impl Image<'static> {
    }
 }
 
-#[cfg(unix)]
+#[cfg(target_vendor = "apple")]
+/// Atomically swaps each `(slot, value)` pair in mapped memory and returns the
+/// values the slots held. `__DATA_CONST` pages are made writable for the write
+/// and restored to read-only afterwards.
+///
+/// # Safety
+///
+/// Every slot is a mapped, pointer-aligned word, and code that reads it accepts
+/// either value.
+pub unsafe fn swap_words(writes: &[(usize, usize)]) -> Result<Vec<usize>, crate::Error> {
+   let page_size = usize::try_from(unsafe { libc::sysconf(libc::_SC_PAGESIZE) }).unwrap_or(16384);
+   let mut pages = writes
+      .iter()
+      .map(|&(slot, _)| slot & !(page_size - 1))
+      .collect::<Vec<usize>>();
+   pages.sort_unstable();
+   pages.dedup();
+   let protect = |page: usize, prot: c_int| {
+      if unsafe { libc::mprotect(page as *mut c_void, page_size, prot) } == 0 {
+         Ok(())
+      } else {
+         Err(crate::Error::Protect { addr: page, source: std::io::Error::last_os_error() })
+      }
+   };
+   for &page in &pages {
+      protect(page, libc::PROT_READ | libc::PROT_WRITE)?;
+   }
+   let previous = writes
+      .iter()
+      .map(|&(slot, value)| unsafe { AtomicUsize::from_ptr(slot as *mut usize) }.swap(value, Ordering::AcqRel))
+      .collect();
+   for &page in &pages {
+      protect(page, libc::PROT_READ)?;
+   }
+   Ok(previous)
+}
+
+#[cfg(all(unix, not(target_vendor = "apple")))]
 /// Atomically swaps each `(slot, value)` pair in mapped memory and returns the
 /// values the slots held. Read-only pages are made writable for the write and
 /// get their protection back afterwards.
@@ -346,15 +398,8 @@ pub unsafe fn swap_words(writes: &[(usize, usize)]) -> Result<Vec<usize>, crate:
    pages.sort_unstable();
    pages.dedup();
 
-   #[cfg(target_vendor = "apple")]
-   let restore = pages
-      .iter()
-      .map(|&page| (page, libc::PROT_READ))
-      .collect::<Vec<(usize, c_int)>>();
-   #[cfg(not(target_vendor = "apple"))]
    let maps = std::fs::read_to_string("/proc/self/maps")
       .map_err(|source| crate::Error::Protect { addr: 0, source })?;
-   #[cfg(not(target_vendor = "apple"))]
    let restore = pages
       .iter()
       .map(|&page| Some((page, protection(&maps, page)?)))
@@ -385,7 +430,7 @@ pub unsafe fn swap_words(writes: &[(usize, usize)]) -> Result<Vec<usize>, crate:
    Ok(previous)
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, not(target_vendor = "apple")))]
 /// Protection of the mapping holding `addr`, from `/proc/self/maps`.
 fn protection(maps: &str, addr: usize) -> Option<c_int> {
    maps.lines().find_map(|line| {
