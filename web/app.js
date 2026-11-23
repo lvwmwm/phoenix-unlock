@@ -1,8 +1,9 @@
-import { PROXY as DEFAULT_PROXY, VERIFIED } from './config.js';
+import { IOS_DEFAULT_IPA, IOS_DEFAULT_NAME, PROXY as DEFAULT_PROXY, VERIFIED } from './config.js';
 import { ABIS, abiOf, buildPatchedApk } from './lib/apk.js';
 import { BOOTSTRAP_URL, bundleScripts, GADGET_URLS, gunzip } from './lib/frida.js';
 import { keysFrom } from './lib/sign.js';
 import { readZip } from './lib/zip.js';
+import { buildPatchedIpa } from './lib/ios.js';
 
 const TRACKER = 'https://tracker.vendetta.rocks';
 const PROXY = (new URLSearchParams(location.search).get('proxy') ?? DEFAULT_PROXY).replace(/\/$/, '');
@@ -220,3 +221,86 @@ function showManual(vc) {
     } catch (e) { fail(e); }
   };
 }
+
+// --- iOS tab ------------------------------------------------------------------------------
+for (const t of document.querySelectorAll('.tab')) {
+  t.onclick = () => {
+    for (const x of document.querySelectorAll('.tab')) x.classList.toggle('active', x === t);
+    $('android').hidden = t.dataset.tab !== 'android';
+    $('ios').hidden = t.dataset.tab !== 'ios';
+  };
+}
+
+function iosStep(label) {
+  const li = document.createElement('li');
+  li.innerHTML = `<span></span><span class="state">waiting</span><span class="bar"><i></i></span>`;
+  li.firstChild.textContent = label;
+  $('ios-steps').append(li);
+  const st = li.querySelector('.state'), bar = li.querySelector('i');
+  return {
+    progress(f, text) { bar.style.width = `${Math.round(f * 100)}%`; st.textContent = text ?? `${Math.round(f * 100)}%`; },
+    done(text = 'done') { li.className = 'done'; bar.style.width = '100%'; st.textContent = text; },
+    fail(text = 'failed') { li.className = 'fail'; st.textContent = text; },
+  };
+}
+const iosLog = (s) => { $('ios-log').textContent += s + '\n'; $('ios-log').scrollTop = 1e9; };
+
+/** Read the picked file, or stream the bundled decrypted IPA as a fallback. */
+async function iosInput(s) {
+  const file = $('ios-file').files[0];
+  if (file) {
+    s.progress(0.1, 'reading…');
+    const u8 = new Uint8Array(await file.arrayBuffer());
+    s.done(mb(u8.length));
+    return { u8, name: file.name.replace(/\.ipa$/i, '') };
+  }
+  if (!IOS_DEFAULT_IPA) throw new Error('Pick a decrypted .ipa first.');
+  iosLog(`No file picked — using ${IOS_DEFAULT_NAME}.`);
+  const res = await fetch(IOS_DEFAULT_IPA);
+  if (!res.ok) throw new Error(`${IOS_DEFAULT_IPA}: HTTP ${res.status}`);
+  const total = +res.headers.get('Content-Length') || 0;
+  const reader = res.body.getReader();
+  let buf = new Uint8Array(total || 1 << 24), n = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (n + value.length > buf.length) {
+      const b = new Uint8Array(Math.max(buf.length * 2, n + value.length));
+      b.set(buf.subarray(0, n)); buf = b;
+    }
+    buf.set(value, n); n += value.length;
+    s.progress(total ? n / total : 0, total ? `${mb(n)} / ${mb(total)}` : mb(n));
+  }
+  s.done(mb(n));
+  return { u8: buf.length === n ? buf : buf.slice(0, n), name: 'discord-357.0-unlocked' };
+}
+
+$('ios-go').onclick = async () => {
+  $('ios-go').disabled = true;
+  $('ios-err').hidden = true;
+  $('ios-result').hidden = true;
+  $('ios-steps').textContent = '';
+  $('ios-log').textContent = '';
+  $('ios-progress').hidden = false;
+  try {
+    const { u8, name } = await iosInput(iosStep('Read IPA'));
+    const patch = iosStep('Patch PhoenixFatClient');
+    patch.progress(0.5, 'working…');
+    const parts = await buildPatchedIpa(u8, iosLog);
+    patch.done('2 evaluators + staff experiments patched');
+
+    const blob = new Blob(parts, { type: 'application/octet-stream' });
+    const a = $('ios-dl');
+    a.href = URL.createObjectURL(blob);
+    a.download = name + '-unlocked.ipa';
+    $('ios-size').textContent = `Patched IPA: ${mb(blob.size)}.`;
+    $('ios-result').hidden = false;
+    a.scrollIntoView({ behavior: 'smooth' });
+  } catch (e) {
+    console.error(e);
+    $('ios-err').textContent = `Something went wrong: ${e.message || e}`;
+    $('ios-err').hidden = false;
+  } finally {
+    $('ios-go').disabled = false;
+  }
+};

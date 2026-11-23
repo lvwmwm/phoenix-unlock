@@ -37,6 +37,8 @@
 
 !web/
 !web/**
+# decrypted IPA is too large for GitHub; keep it local for the built-in fallback
+web/ios/*.ipa
 # built from plugins/*/src by web/tools/bundle-plugins.mjs (CI does it for the site)
 web/plugins/*.js
 web/plugins/index.json

@@ -54,13 +54,24 @@
   .contributors a { display:flex; align-items:center; gap:10px; font-weight:600; text-decoration:none; color:var(--fg); }
   .contributors a:hover { color:var(--acc); }
   .contributors img { border-radius:50%; background:var(--line); }
+  .tabs { display:flex; gap:8px; margin:0 0 16px; }
+  .tab { width:auto; flex:1; padding:10px; background:transparent; color:var(--mut); border:1px solid var(--line); border-radius:10px; }
+  .tab:hover { color:var(--fg); border-color:var(--acc); }
+  .tab.active { background:var(--acc); color:#fff; border-color:var(--acc); }
+  input[type=file] { max-width:100%; font-size:14px; }
 </style>
 </head>
 <body>
 <main>
   <h1>Phoenix Unlock</h1>
-  <p class="lede">Patches Discord's new native client (Phoenix) so it opens without the access gate, with Phoenix Unlock's plugin runtime and the plugins you pick built in. It all runs in this browser; nothing is uploaded.</p>
+  <p class="lede">Patches Discord's new native client (Phoenix) so it opens without the access gate. It all runs in this browser; nothing is uploaded.</p>
 
+  <div class="tabs" role="tablist">
+    <button class="tab active" data-tab="android" role="tab">Android</button>
+    <button class="tab" data-tab="ios" role="tab">iOS</button>
+  </div>
+
+  <div id="android">
   <section class="card" id="setup">
     <div class="row"><label for="ver">Discord build</label><select id="ver"></select></div>
     <div class="row"><label for="dpi">Screen density</label><select id="dpi"></select></div>
@@ -112,6 +123,29 @@ phoenix.on(phoenix.gateway.messageCreate, (m) => phoenix.log.info(m.author?.user
     2. Open the downloaded file and allow your browser to install apps if asked.<br>
     3. Later builds: just patch again. Builds are signed with Phoenix Unlock's key, rotated from the one earlier builds used, so it installs as an update over either (Android 9+) and you stay logged in.</p>
   </section>
+  </div><!-- /android -->
+
+  <div id="ios" hidden>
+    <section class="card" id="ios-setup">
+      <p class="note"><b>iOS build (Discord 357.0 / 1.12.2).</b> Pick a <b>decrypted</b> IPA of the hybrid Discord build that contains <code>PhoenixFatClient.framework</code>. App Store copies are FairPlay-encrypted and cannot be patched; decrypt yours first (e.g. with TrollDecrypt on a jailbroken device). The file never leaves your browser.</p>
+      <p class="note">The patch also enables <b>Discord experiments</b> (staff mode) by forcing <code>isStaffEnv</code> in the JS bundle, so the Phoenix launch switch is available without any extra tweak.</p>
+      <input type="file" id="ios-file" accept=".ipa,application/octet-stream">
+      <p class="note">Leave it empty to use the built-in <b>Discord 357.0</b> decrypted hybrid IPA.</p>
+    </section>
+
+    <button id="ios-go">Patch IPA</button>
+    <p class="err" id="ios-err" hidden></p>
+
+    <section class="card" id="ios-progress" hidden>
+      <ol class="steps" id="ios-steps"></ol>
+      <pre id="ios-log"></pre>
+    </section>
+
+    <section class="card" id="ios-result" hidden>
+      <a class="btn" id="ios-dl" download>Download patched IPA</a>
+      <p class="note"><span id="ios-size"></span></p>
+    </section>
+  </div><!-- /ios -->
 
   <h2>Contributors</h2>
   <section class="card contributors">
