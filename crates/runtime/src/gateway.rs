@@ -61,6 +61,8 @@ static QUEUE: Mutex<Vec<(EventId, String)>> = Mutex::new(Vec::new());
 static QUEUED: AtomicBool = AtomicBool::new(false);
 
 thread_local! {
+   #[cfg(target_os = "ios")]
+   static NOTIFY_OPS: Cell<bool> = const { Cell::new(true) };
    #[allow(
       clippy::missing_const_for_thread_local,
       reason = "fires on Android only, where the initializer is already const"
@@ -73,6 +75,25 @@ thread_local! {
    static HANDLING: Cell<Option<Handling>> = const { Cell::new(None) };
 }
 
+/// Suppresses ops notifications for synthetic calls sharing this detour's vector.
+#[cfg(target_os = "ios")]
+struct QuietOps(bool);
+
+#[cfg(target_os = "ios")]
+impl Drop for QuietOps {
+   fn drop(&mut self) {
+      NOTIFY_OPS.set(self.0);
+   }
+}
+
+#[cfg(target_os = "ios")]
+fn quiet_ops() -> QuietOps {
+   QuietOps(NOTIFY_OPS.replace(false))
+}
+
+#[cfg(not(target_os = "ios"))]
+fn quiet_ops() {}
+
 /// The host's handler arguments for the event whose hooks are running, so a
 /// hook can feed Phoenix another event on the same store thread.
 #[derive(Clone, Copy)]
@@ -80,6 +101,25 @@ struct Handling {
    store: *mut c_void,
    ctx:   *mut c_void,
    rest:  [u64; 4],
+}
+
+/// Calls the original handler and notifies ops hooks on iOS.
+fn invoke(
+   gateway: &Gateway,
+   id: EventId,
+   store: *mut c_void,
+   event: *const GatewayEvent,
+   ctx: *mut c_void,
+) -> HandlerResult {
+   let original = gateway.originals[id.index()];
+   // SAFETY: `store`, `event` and `ctx` are the registry handler's own
+   // arguments, and `original` came from that registry entry.
+   let result = unsafe { original(store, event, ctx) };
+   #[cfg(target_os = "ios")]
+   if NOTIFY_OPS.get() {
+      crate::ops::after_handler(ctx, &gateway.registry.entry(id).name);
+   }
+   result
 }
 
 /// Points every registry entry at [`detour`]. Phoenix looks handlers up in the
@@ -198,8 +238,14 @@ pub fn dispatch(event: EventId, data: &str) -> Option<bool> {
 
    // SAFETY: `handling` holds the arguments of a handler call still on this
    // thread's stack, and the event borrows strings that outlive the call.
-   let original = gateway.originals[event.index()];
-   let result = unsafe { original(handling.store, &raw const synthetic, handling.ctx) };
+   let _quiet = quiet_ops();
+   let result = invoke(
+      gateway,
+      event,
+      handling.store,
+      &raw const synthetic,
+      handling.ctx,
+   );
    Some(result.is_ok())
 }
 
@@ -235,8 +281,8 @@ fn flush(gateway: &Gateway, store: *mut c_void, ctx: *mut c_void, rest: [u64; 4]
       };
       // SAFETY: `store` and `ctx` are the arguments of the handler call this
       // runs inside, and the event borrows strings that outlive the call.
-      let original = gateway.originals[event.index()];
-      if unsafe { original(store, &raw const synthetic, ctx) }.is_ok() {
+      let _quiet = quiet_ops();
+      if invoke(gateway, event, store, &raw const synthetic, ctx).is_ok() {
          continue;
       }
       log::warn!("Phoenix rejected a queued {name}");
@@ -296,10 +342,8 @@ unsafe extern "C" fn detour(
    });
    let event = promoted_event.as_ref().unwrap_or(event);
    let data = promoted.as_deref().or(data);
-   let original = gateway.originals[id.index()];
-   // SAFETY: forwarded to the registry's own handler unchanged or with
-   // replaced data.
-   let call = |event: &GatewayEvent| unsafe { original(store, event, ctx) };
+   // Forwarded to the registry's own handler unchanged or with replaced data.
+   let call = |event: &GatewayEvent| invoke(gateway, id, store, event, ctx);
 
    let listened = gateway.hooked[id.index()].load(Ordering::Acquire);
    let (true, Some(state), Some(data), false) = (listened, STATE.get(), data, IN_JS.get()) else {

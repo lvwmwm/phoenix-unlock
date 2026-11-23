@@ -311,6 +311,31 @@ impl Image<'static> {
    }
 }
 
+#[cfg(windows)]
+impl Image<'static> {
+   /// Windows stubs for host tests; no image is enumerated.
+   ///
+   /// # Safety
+   ///
+   /// No image is enumerated.
+   pub unsafe fn loaded() -> Vec<Self> {
+      Vec::new()
+   }
+
+   /// # Safety
+   ///
+   /// No memory is written.
+   pub unsafe fn swap_words(&self, writes: &[(usize, usize)]) -> Result<Vec<usize>, crate::Error> {
+      unsafe { swap_words(writes) }
+   }
+}
+
+#[cfg(windows)]
+/// Windows stub for the pointer swap: no memory is written.
+pub unsafe fn swap_words(writes: &[(usize, usize)]) -> Result<Vec<usize>, crate::Error> {
+   Ok(writes.iter().map(|_| 0).collect())
+}
+
 #[cfg(target_vendor = "apple")]
 impl Image<'static> {
    /// Writes each `(slot, value)` pair into this module's mapped memory and

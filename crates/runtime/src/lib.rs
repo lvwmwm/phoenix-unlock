@@ -29,9 +29,14 @@ pub mod console;
 #[cfg(target_os = "android")] mod fetch;
 mod gateway;
 #[cfg(target_os = "android")] mod highlight;
+// Also compiled under test so host tests cover the discovery traits.
+#[cfg_attr(test, allow(dead_code))]
+#[cfg(any(target_os = "ios", test))] pub mod ios;
 mod js;
 #[cfg(target_os = "android")] mod jvm;
 mod local;
+/// The guest's UI-op vector, used by the iOS hook.
+pub mod ops;
 #[cfg(target_os = "android")] mod patches;
 #[cfg(target_os = "android")] mod picker;
 #[cfg(target_os = "android")] mod remote;
@@ -460,6 +465,8 @@ pub fn start(home: PathBuf, bundled: Vec<Plugin>) -> Result<Started, Error> {
       settings::start();
       patches::start();
    }
+   #[cfg(target_os = "ios")]
+   ios::start(&state.image);
    Ok(Started {
       target: state.image.path.clone(),
       build: state.build.map(|build| build.label),
