@@ -10,7 +10,7 @@ flub   = { workspace = true }
 libc   = { workspace = true }
 memchr = { workspace = true }
 
-[target.'cfg(not(any(windows, all(target_os = "android", any(target_arch = "aarch64", target_arch = "arm")))))'.dependencies]
+[target.'cfg(not(any(windows, target_vendor = "apple", all(target_os = "android", any(target_arch = "aarch64", target_arch = "arm")))))'.dependencies]
 dobby-rs = { workspace = true }
 
 [build-dependencies]
