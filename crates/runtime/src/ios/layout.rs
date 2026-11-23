@@ -14,7 +14,7 @@ pub const PINNED_UUID: &str = "4434ca40b8c13222a303851598aaf121";
 /// from the live bridge: a trait object at 0x283a5ef90 pointed to vtable
 /// 0x10f995700, whose +0x20 held dispatch 0x10e9005e0, phx base 0x10a44c000.
 /// The vtable is a Rust static, so this vmaddr is stable across launches.
-pub const GUEST_VTABLE_SLOT: u64 = 0x0054_9720;
+pub const GUEST_VTABLE_SLOT: u64 = 0x0554_9720;
 
 /// Unslid vmaddr of the Swift→Rust bridge, used only as a cross-check of a
 /// discovered dispatch target. Do not patch this function.
