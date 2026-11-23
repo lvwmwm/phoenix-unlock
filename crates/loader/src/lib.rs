@@ -75,6 +75,14 @@ fn home() -> PathBuf {
    if let Some(home) = env::var_os("PHOENIX_HOME") {
       return PathBuf::from(home);
    }
+   #[cfg(target_vendor = "apple")]
+   {
+      // The app's Documents directory inside its sandbox.
+      if let Ok(dir) = std::env::var("HOME") {
+         return PathBuf::from(dir).join("Documents/phoenix");
+      }
+      return PathBuf::from("/Documents/phoenix");
+   }
    // /proc/self/cmdline starts with the package name, plus `:process` for
    // secondary processes.
    let package = fs::read("/proc/self/cmdline")
