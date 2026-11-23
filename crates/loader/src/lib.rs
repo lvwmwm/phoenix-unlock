@@ -74,7 +74,7 @@ extern "C" fn init() {
 static CONSTRUCTOR: extern "C" fn() = init;
 
 #[cfg(target_vendor = "apple")]
-extern "C" {
+unsafe extern "C" {
    fn _dyld_register_func_for_add_image(cb: extern "C" fn(*const c_void, isize));
    fn _dyld_image_count() -> u32;
    fn _dyld_get_image_name(index: u32) -> *const std::os::raw::c_char;
@@ -145,6 +145,7 @@ fn home() -> PathBuf {
       }
       return PathBuf::from("/Documents/phoenix");
    }
+    #[cfg(not(target_vendor = "apple"))]
    // /proc/self/cmdline starts with the package name, plus `:process` for
    // secondary processes.
    let package = fs::read("/proc/self/cmdline")
