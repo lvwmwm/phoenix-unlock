@@ -145,9 +145,9 @@ fn home() -> PathBuf {
       }
       return PathBuf::from("/Documents/phoenix");
    }
-    #[cfg(not(target_vendor = "apple"))]
    // /proc/self/cmdline starts with the package name, plus `:process` for
    // secondary processes.
+   #[cfg(not(target_vendor = "apple"))]
    let package = fs::read("/proc/self/cmdline")
       .ok()
       .and_then(|cmdline| {
@@ -155,7 +155,10 @@ fn home() -> PathBuf {
          String::from_utf8(name).ok()
       })
       .map_or_default(|name| name.split(':').next().unwrap_or_default().to_owned());
-   PathBuf::from(format!("/data/data/{package}/files/phoenix"))
+   #[cfg(not(target_vendor = "apple"))]
+   return PathBuf::from(format!("/data/data/{package}/files/phoenix"));
+   #[cfg(target_vendor = "apple")]
+   unreachable!()
 }
 
 fn bundled() -> Vec<Plugin> {
