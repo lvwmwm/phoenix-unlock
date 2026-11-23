@@ -32,6 +32,14 @@ use std::{
    },
 };
 
+use std::sync::atomic::{
+   AtomicBool,
+   Ordering,
+};
+
+#[cfg(target_vendor = "apple")]
+use std::time::Duration;
+
 use misstep::ResultExt;
 use phoenix_runtime::{
    Plugin,
@@ -43,6 +51,20 @@ use zip::{
    result::ZipError,
 };
 
+extern "C" fn init() {
+   logging();
+   #[cfg(target_vendor = "apple")]
+   {
+      // Injected into the main executable: register for late image loads and
+      // check what is already mapped. Registration invokes the callback once
+      // per currently-loaded image, so late-loaded PhoenixFatClient is caught.
+      unsafe { _dyld_register_func_for_add_image(on_image_added) };
+      try_start();
+   }
+   #[cfg(not(target_vendor = "apple"))]
+   start_runtime();
+}
+
 #[used]
 #[cfg_attr(not(target_vendor = "apple"), unsafe(link_section = ".init_array"))]
 #[cfg_attr(
@@ -51,8 +73,48 @@ use zip::{
 )]
 static CONSTRUCTOR: extern "C" fn() = init;
 
-extern "C" fn init() {
-   logging();
+#[cfg(target_vendor = "apple")]
+extern "C" {
+   fn _dyld_register_func_for_add_image(cb: extern "C" fn(*const c_void, isize));
+   fn _dyld_image_count() -> u32;
+   fn _dyld_get_image_name(index: u32) -> *const std::os::raw::c_char;
+}
+
+#[cfg(target_vendor = "apple")]
+static STARTED: AtomicBool = AtomicBool::new(false);
+
+#[cfg(target_vendor = "apple")]
+fn phoenix_loaded() -> bool {
+   unsafe {
+      let count = _dyld_image_count();
+      for i in 0..count {
+         let ptr = _dyld_get_image_name(i);
+         if ptr.is_null() { continue; }
+         if CStr::from_ptr(ptr).to_string_lossy().contains("PhoenixFatClient") {
+            return true;
+         }
+      }
+   }
+   false
+}
+
+#[cfg(target_vendor = "apple")]
+fn try_start() {
+   if !phoenix_loaded() { return; }
+   if STARTED.swap(true, Ordering::AcqRel) { return; }
+   // Defer so dyld has finished the new image's initializers.
+   std::thread::spawn(|| {
+      std::thread::sleep(Duration::from_millis(250));
+      start_runtime();
+   });
+}
+
+#[cfg(target_vendor = "apple")]
+extern "C" fn on_image_added(_mh: *const c_void, _slide: isize) {
+   try_start();
+}
+
+extern "C" fn start_runtime() {
    // Unwinding out of a constructor aborts the host, so a bug here costs
    // plugins, not the app.
    match panic::catch_unwind(AssertUnwindSafe(|| {
