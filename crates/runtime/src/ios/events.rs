@@ -139,9 +139,20 @@ fn validate(mem: &dyn MemoryReader, map: &dyn ImageMap, slot: u64) -> Option<Gue
 /// this needs no GuestHost walk and works before the Swift host is set up.
 fn validate_slot(mem: &dyn MemoryReader, map: &dyn ImageMap, slot: u64) -> Option<Guest> {
    let vtable = slot.checked_sub(field::VTABLE_DISPATCH)?;
-   let dispatch = mem.word(slot)?;
-   let drop = mem.word(vtable)?;
+   let Some(dispatch) = mem.word(slot) else {
+      log::warn!("events: pinned slot {slot:#x} is unreadable");
+      return None;
+   };
+   let Some(drop) = mem.word(vtable) else {
+      log::warn!("events: pinned vtable {vtable:#x} is unreadable");
+      return None;
+   };
    if !map.is_code(drop) || !map.is_code(dispatch) {
+      log::warn!(
+         "events: pinned slot failed code check: drop={drop:#x} code={} dispatch={dispatch:#x} code={}",
+         map.is_code(drop),
+         map.is_code(dispatch)
+      );
       return None;
    }
    Some(Guest {
