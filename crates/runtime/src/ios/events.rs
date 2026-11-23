@@ -34,7 +34,7 @@ use phoenix_hook::Image;
 #[cfg(target_vendor = "apple")]
 use super::layout::{
    BRIDGE as BRIDGE_VMADDR,
-   GUEST_HOST_SLOT,
+   GUEST_VTABLE_SLOT,
    PINNED_UUID,
 };
 use super::layout::field;
@@ -131,6 +131,26 @@ fn validate(mem: &dyn MemoryReader, map: &dyn ImageMap, slot: u64) -> Option<Gue
       trait_obj,
       vtable,
       slot: vtable + field::VTABLE_DISPATCH,
+      dispatch,
+   })
+}
+
+/// Validates a known vtable slot directly. The vtable is a Rust static, so
+/// this needs no GuestHost walk and works before the Swift host is set up.
+fn validate_slot(mem: &dyn MemoryReader, map: &dyn ImageMap, slot: u64) -> Option<Guest> {
+   let vtable = slot.checked_sub(field::VTABLE_DISPATCH)?;
+   let dispatch = mem.word(slot)?;
+   let drop = mem.word(vtable)?;
+   if !map.is_code(drop) || !map.is_code(dispatch) {
+      return None;
+   }
+   Some(Guest {
+      host_slot: 0,
+      host: 0,
+      guest: 0,
+      trait_obj: 0,
+      vtable,
+      slot,
       dispatch,
    })
 }
@@ -256,10 +276,17 @@ fn ensure_installed() {
       let slide = slide_of(image)?;
       let uuid = image.build_id.map(|id| id.to_string());
       let pinned = (uuid.as_deref() == Some(PINNED_UUID))
-         .then(|| usize::try_from(slide).ok()?.checked_add(GUEST_HOST_SLOT))
+         .then(|| usize::try_from(slide).ok()?.checked_add(GUEST_VTABLE_SLOT as usize))
          .flatten()
          .map(|slot| slot as u64);
-      let guest = match discover(&ProcessMemory, image, pinned) {
+      // The vtable is a Rust static, so the pinned slot is the primary path.
+      // The GuestHost walk stays as a fallback for a rebuilt binary.
+      let found = match pinned {
+         Some(slot) => validate_slot(&ProcessMemory, image, slot)
+            .map_or_else(|| discover(&ProcessMemory, image, None), Ok),
+         None => discover(&ProcessMemory, image, None),
+      };
+      let guest = match found {
          Ok(guest) => guest,
          Err(err) => {
             log::error!(
