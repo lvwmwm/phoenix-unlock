@@ -31,6 +31,12 @@ macro_rules! gateway {
 
 pub static BUILDS: &[Build] = &[
    Build {
+      id:      BuildId::hex("4434ca40b8c13222a303851598aaf121"),
+      label:   "Phoenix 357.0 iOS (PhoenixFatClient)",
+      library: "PhoenixFatClient",
+      gateway: &[],
+   },
+   Build {
       id:      BuildId::hex("c4b06db4b1ec3311e9a7e10238d646a62a484c5f"),
       label:   "Phoenix 356.7 (356207) arm64-v8a",
       library: "liblibdiscord_wasm_host.so",
