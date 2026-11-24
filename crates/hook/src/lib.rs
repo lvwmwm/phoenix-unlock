@@ -12,13 +12,11 @@ use std::{
    ptr::NonNull,
 };
 
-#[cfg(not(any(windows, target_vendor = "apple", all(
+#[cfg(not(any(windows, all(
    target_os = "android",
    any(target_arch = "aarch64", target_arch = "arm")
 ))))]
 mod dobby;
-#[cfg(target_vendor = "apple")]
-mod noop;
 // On Windows only the parts the host-side patcher reads build; the rest needs dl_iterate_phdr.
 #[cfg_attr(windows, allow(dead_code, unused_imports))]
 mod image;
@@ -30,13 +28,11 @@ mod pattern;
 ))]
 mod shadowhook;
 
-#[cfg(not(any(windows, target_vendor = "apple", all(
+#[cfg(not(any(windows, all(
    target_os = "android",
    any(target_arch = "aarch64", target_arch = "arm")
 ))))]
 pub use dobby::Dobby as Inline;
-#[cfg(target_vendor = "apple")]
-pub use noop::Noop as Inline;
 #[cfg(unix)] pub use image::swap_words;
 pub use image::{
    BuildId,

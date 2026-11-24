@@ -360,7 +360,7 @@ impl MemoryReader for ProcessMemory {
 
 /// ASLR slide of the image whose path `Image::loaded` recorded.
 #[cfg(target_vendor = "apple")]
-fn slide_of(image: &Image<'_>) -> Option<isize> {
+pub(crate) fn slide_of(image: &Image<'_>) -> Option<isize> {
    // SAFETY: dyld's queries take an index below the count it just returned.
    unsafe {
       let count = _dyld_image_count();

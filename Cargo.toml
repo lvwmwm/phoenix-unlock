@@ -13,6 +13,10 @@ members  = [
 ]
 resolver = "3"
 
+[patch.crates-io]
+# Patched dobby-sys: links libc++ on Apple instead of libstdc++ (removed from modern iOS/macOS SDKs).
+dobby-sys = { path = "vendor/dobby-sys" }
+
 [workspace.package]
 edition = "2024"
 license = "MIT"

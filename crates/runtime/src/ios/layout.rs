@@ -20,6 +20,12 @@ pub const GUEST_VTABLE_SLOT: u64 = 0x0554_9720;
 /// discovered dispatch target. Do not patch this function.
 pub const BRIDGE: usize = 0x044b_80b8;
 
+/// Unslid vmaddr of the `CATransaction` block invoke built in `applyOps`
+/// (`0x34926c`). Ghidra names the block literal `&DAT_00159618`; its context
+/// carries the rendered UI strings as Swift inline small strings. Code patch,
+/// not a data slot: jailbroken/Dobby only.
+pub const APPLY_OPS_BLOCK: usize = 0x0015_9618;
+
 /// Field offsets inside the live objects. These are Rust/Swift layout facts,
 /// not code addresses, and are reused by the build-agnostic structural search.
 pub mod field {
