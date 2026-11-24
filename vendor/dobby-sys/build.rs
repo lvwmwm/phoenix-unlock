@@ -26,7 +26,8 @@ fn link_dobby() {
         _ => &target_arch,
     };
 
-    let lib_path = Path::new("dobby_static").join(os_dir).join(arch_dir);
+    let manifest = std::env::var("CARGO_MANIFEST_DIR").unwrap();
+    let lib_path = Path::new(&manifest).join("dobby_static").join(os_dir).join(arch_dir);
     println!("cargo:warning=lib_path={}", lib_path.display());
     println!("cargo:rustc-link-search=native={}", lib_path.display());
     println!("cargo:rustc-link-lib=static=dobby");
