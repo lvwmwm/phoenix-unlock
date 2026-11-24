@@ -480,7 +480,10 @@ fn fresh_id(ops: &OpArray) -> u64 {
 // ---------------------------------------------------------------------------
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(OWN_ID_BASE);
-static ENABLED: AtomicBool = AtomicBool::new(true);
+// Disabled by default: the op-clone injection crashed Phoenix 357.0 on launch
+// (EXC_BAD_ACCESS resolving a synthetic view id). Enable only after the Create
+// op is emitted in the right order with retained payloads. See HANDOFF §10.
+static ENABLED: AtomicBool = AtomicBool::new(false);
 static LOGGED: AtomicBool = AtomicBool::new(false);
 static CAPTURED: OnceLock<Mutex<Option<[u64; 5]>>> = OnceLock::new();
 
