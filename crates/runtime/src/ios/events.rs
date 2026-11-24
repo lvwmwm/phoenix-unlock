@@ -37,10 +37,18 @@ use super::layout::{
    GUEST_VTABLE_SLOT,
    PINNED_UUID,
 };
-use super::{
-   layout::field,
-   signatures,
-};
+use super::layout::field;
+
+use phoenix_hook::Pattern;
+
+/// Bridge signature: `mov x19,x3; ldp x8,x9,[x0]; cmp x2,#0;
+/// csinc x1,x1,xzr,ne; ldr x9,[x9,#0x20]; mov x0,x8; blr x9`, with a
+/// wildcard prologue. Uses the repo's existing IDA-pattern matcher.
+const BRIDGE_PATTERN: Pattern = Pattern::ida(
+   "?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? \
+    f3 03 03 aa 08 24 40 a9 5f 00 00 f1 21 14 9f 9a \
+    29 11 40 f9 e0 03 08 aa 20 01 3f d6"
+);
 
 type DispatchFn = unsafe extern "C" fn(*mut c_void, *const u8, usize, *mut c_void) -> *mut c_void;
 
@@ -57,8 +65,8 @@ pub(crate) trait ImageMap {
    fn image_of(&self, addr: u64) -> Option<usize>;
    /// Pointer-aligned data slots holding a pointer outside every image.
    fn pointer_slots(&self) -> Vec<(usize, u64)>;
-   /// Addresses matching `words` in executable segments.
-   fn signature(&self, _words: &[Option<u32>]) -> Vec<u64> {
+   /// Addresses matching the bridge signature in executable segments.
+   fn signature(&self) -> Vec<u64> {
       Vec::new()
    }
 }
@@ -81,13 +89,14 @@ fn pointer_slots_in(image: &Image<'_>, in_image: impl Fn(u64) -> bool) -> Vec<(u
    out
 }
 
-fn signature_in(image: &Image<'_>, words: &[Option<u32>]) -> Vec<u64> {
+fn signature_in(image: &Image<'_>) -> Vec<u64> {
    image
       .segments
       .iter()
       .filter(|segment| segment.executable)
       .flat_map(|segment| {
-         signatures::find(&segment.bytes, words)
+         BRIDGE_PATTERN
+            .find_in(&segment.bytes)
             .into_iter()
             .map(move |offset| (segment.addr + offset) as u64)
       })
@@ -137,8 +146,8 @@ impl ImageMap for Image<'_> {
       pointer_slots_in(self, |value| self.image_of(value).is_some())
    }
 
-   fn signature(&self, words: &[Option<u32>]) -> Vec<u64> {
-      signature_in(self, words)
+   fn signature(&self) -> Vec<u64> {
+      signature_in(self)
    }
 }
 
@@ -159,8 +168,8 @@ impl ImageMap for AllImages<'_> {
          .collect()
    }
 
-   fn signature(&self, words: &[Option<u32>]) -> Vec<u64> {
-      self.images.iter().flat_map(|image| signature_in(image, words)).collect()
+   fn signature(&self) -> Vec<u64> {
+      self.images.iter().flat_map(signature_in).collect()
    }
 }
 
@@ -268,7 +277,7 @@ pub(crate) fn discover(
 ) -> Result<Guest, DiscoveryError> {
    // The bridge signature anchors structural results to the image whose
    // vtable call dispatches events. Refuse to guess if it is not unique.
-   let bridges = map.signature(signatures::BRIDGE);
+   let bridges = map.signature();
    let bridge = match bridges.len() {
       0 => {
          log::debug!("events: bridge signature not found; using layout checks only");
@@ -780,7 +789,7 @@ mod tests {
          self.slots.clone()
       }
 
-      fn signature(&self, _words: &[Option<u32>]) -> Vec<u64> {
+      fn signature(&self) -> Vec<u64> {
          self.bridge.into_iter().collect()
       }
    }
@@ -884,7 +893,7 @@ mod tests {
          fn pointer_slots(&self) -> Vec<(usize, u64)> {
             self.0.pointer_slots()
          }
-         fn signature(&self, _words: &[Option<u32>]) -> Vec<u64> {
+         fn signature(&self) -> Vec<u64> {
             vec![0x1500, 0x1600]
          }
       }
@@ -900,9 +909,11 @@ mod tests {
       use phoenix_hook::Segment;
 
       let mut code = vec![0u8; 128];
-      for (index, word) in signatures::BRIDGE.iter().enumerate() {
-         let at = 16 + index * 4;
-         code[at..at + 4].copy_from_slice(&word.unwrap_or(0).to_le_bytes());
+      // Core of the bridge pattern at 0x10 (signature has a 4-word wildcard prologue).
+      for (index, word) in [0xaa03_03f3u32, 0xa940_2408, 0xf100_005f, 0x9a9f_1421,
+                            0xf940_1129, 0xaa08_03e0, 0xd63f_0120].iter().enumerate() {
+         let at = 32 + index * 4;
+         code[at..at + 4].copy_from_slice(&word.to_le_bytes());
       }
       let mut data = vec![0u8; 64];
       data[8..16].copy_from_slice(&0xdead_be00u64.to_ne_bytes());
@@ -932,7 +943,7 @@ mod tests {
       ];
       let all = AllImages::new(&images);
       assert!(all.pointer_slots().contains(&(0x200008, 0xdead_be00)));
-      assert_eq!(all.signature(signatures::BRIDGE), vec![0x100010]);
+      assert_eq!(all.signature(), vec![0x100010]);
       assert!(all.is_code(0x100020));
       assert_eq!(all.image_of(0x200010), Some(1));
    }

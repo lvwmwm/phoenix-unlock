@@ -6,7 +6,6 @@ pub mod block;
 pub mod events;
 pub mod layout;
 pub mod settings;
-pub mod signatures;
 
 use phoenix_hook::Image;
 
