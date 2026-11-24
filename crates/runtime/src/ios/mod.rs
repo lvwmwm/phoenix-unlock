@@ -5,6 +5,7 @@
 pub mod block;
 pub mod events;
 pub mod layout;
+pub mod rows;
 pub mod settings;
 
 use phoenix_hook::Image;
@@ -13,5 +14,6 @@ use phoenix_hook::Image;
 pub fn start(image: &'static Image<'static>) {
    events::prepare(image);
    block::start(image);
+   rows::start(image);
    settings::start();
 }

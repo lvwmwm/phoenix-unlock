@@ -7,6 +7,7 @@ version.workspace = true
 
 [dependencies]
 flub         = { workspace = true }
+libc         = { workspace = true }
 log          = { workspace = true }
 phoenix-hook = { workspace = true }
 phoenix-sigs = { workspace = true }
@@ -23,7 +24,6 @@ rquickjs = { features = [ "bindgen" ], workspace = true }
 [target.'cfg(target_os = "android")'.dependencies]
 crc32fast = { workspace = true }
 jni-sys   = { workspace = true }
-libc      = { workspace = true }
 memchr    = { workspace = true }
 
 [lints]

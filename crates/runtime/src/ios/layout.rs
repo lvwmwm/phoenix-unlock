@@ -26,6 +26,11 @@ pub const BRIDGE: usize = 0x044b_80b8;
 /// not a data slot: jailbroken/Dobby only.
 pub const APPLY_OPS_BLOCK: usize = 0x0015_9618;
 
+/// Unslid vmaddr of the real op applier `FUN_003496e8` (size `0x2950`), called
+/// from `0x4619c`/`0x462f8` with x0 = Swift `Array<Op>` and x20 = the module.
+/// Code patch, jailbroken/Dobby only; `rows.rs` hooks this address.
+pub const APPLIER: u64 = 0x0034_96e8;
+
 /// Field offsets inside the live objects. These are Rust/Swift layout facts,
 /// not code addresses, and are reused by the build-agnostic structural search.
 pub mod field {
