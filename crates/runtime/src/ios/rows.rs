@@ -359,7 +359,7 @@ fn captured() -> Option<[u64; 5]> {
       .get_or_init(|| Mutex::new(None))
       .lock()
       .unwrap_or_else(PoisonError::into_inner);
-   (*slot).unwrap_or(None)
+   *slot
 }
 
 fn remember_create(words: [u64; 5]) {
